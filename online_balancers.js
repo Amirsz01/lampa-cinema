@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.6.0';
+    var VERSION = '0.7.0';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -142,6 +142,94 @@
         }
     };
 
+
+    function requestText(url, headers) {
+        return new Promise(function (resolve, reject) {
+            var proxyBase = getProxyBase();
+            var requestUrl = proxyBase ? proxyLink(url, proxyBase) : url;
+            if (!root.Lampa || typeof root.Lampa.Reguest !== 'function') {
+                reject(new Error('Для Collaps требуется сетевой модуль Lampa'));
+                return;
+            }
+            var network = new root.Lampa.Reguest();
+            network.timeout(15000);
+            network.native(requestUrl, function (data) {
+                resolve(typeof data === 'string' ? data : String(data || ''));
+            }, function (a, b) {
+                reject(new Error(network.errorDecode ? network.errorDecode(a, b) : 'Ошибка запроса Collaps'));
+            }, false, { dataType: 'text', headers: headers || {} });
+        });
+    }
+
+    function parseCollapsPlayer(text) {
+        var match = String(text || '').replace(/\\n/g, '').match(/makePlayer\\(({.*?})\\);/);
+        if (!match) throw new Error('Collaps не вернул конфигурацию плеера');
+        try {
+            return JSON.parse(match[1]);
+        } catch (e) {
+            try { return (new Function('return (' + match[1] + ')'))(); }
+            catch (error) { throw new Error('Не удалось разобрать ответ Collaps'); }
+        }
+    }
+
+    adapters.collaps = {
+        id: 'collaps',
+        name: 'Collaps',
+        capabilities: ['search', 'seasons', 'episodes', 'hls'],
+        search: function (queries, movie) {
+            var kp = movie && (movie.kinopoisk_id || movie.id);
+            var imdb = movie && movie.imdb_id;
+            var ids = [];
+            if (kp) ids.push('kp/' + encodeURIComponent(kp));
+            if (imdb) ids.push('imdb/' + encodeURIComponent(imdb));
+            if (!ids.length) return Promise.reject(new Error('Для Collaps нужен ID Кинопоиска или IMDb'));
+            var hosts = ['https://api.nextembed.ws/embed/', 'https://api.kinogram.best/embed/'];
+            function attempt(index, hostIndex) {
+                if (index >= ids.length) return Promise.resolve([]);
+                if (hostIndex >= hosts.length) return attempt(index + 1, 0);
+                return requestText(hosts[hostIndex] + ids[index]).then(function (html) {
+                    var config = parseCollapsPlayer(html);
+                    var seasons = config.playlist && config.playlist.seasons || [];
+                    var normalized = {
+                        id: ids[index],
+                        source: 'collaps',
+                        title: config.title || (movie && (movie.title || movie.name)) || 'Collaps',
+                        year: movie && movie.year || '',
+                        raw: config
+                    };
+                    if (seasons.length || config.source) return [normalized];
+                    return attempt(index, hostIndex + 1);
+                }).catch(function () { return attempt(index, hostIndex + 1); });
+            }
+            return attempt(0, 0);
+        },
+        resolve: function (item) {
+            if (!item || !item.raw) return Promise.reject(new Error('Нет данных Collaps'));
+            var config = item.raw;
+            var seasons = config.playlist && config.playlist.seasons || [];
+            var entries = [];
+            seasons.forEach(function (season) {
+                (season.episodes || []).forEach(function (episode) {
+                    var url = episode.hls || episode.dasha || episode.dash || '';
+                    if (url) entries.push({
+                        season: season.season,
+                        ordinal: Number(episode.episode) || entries.length + 1,
+                        title: episode.title || ('Серия ' + episode.episode),
+                        hls: url,
+                        audio: episode.audio || {},
+                        subtitles: episode.cc || []
+                    });
+                });
+            });
+            if (!entries.length && config.source) {
+                var url = config.source.hls || config.source.dasha || config.source.dash;
+                if (url) entries.push({ ordinal: 1, title: config.title || item.title, hls: url, audio: config.source.audio || {}, subtitles: config.source.cc || [] });
+            }
+            if (!entries.length) return Promise.reject(new Error('В ответе Collaps нет доступных HLS-серий'));
+            return Promise.resolve({ title: config.title || item.title, episodes: entries });
+        }
+    };
+
     function getStorage() {
         return root.Lampa && root.Lampa.Storage ? root.Lampa.Storage : null;
     }
@@ -245,7 +333,7 @@
 
             function showEpisodes(item) {
                 notify('Загружаю список серий…');
-                adapters.anilibria.resolve(item).then(function (detail) {
+                adapters[item.source || 'anilibria'].resolve(item).then(function (detail) {
                     if (destroyed) return;
                     var episodes = episodeEntries(detail);
                     if (!episodes.length) {
@@ -353,7 +441,7 @@
             { id: 'hls_720', title: '720p' },
             { id: 'hls_480', title: '480p' }
         ].filter(function (quality) {
-            return playlist.some(function (item) { return !!item[quality.id]; });
+            return playlist.some(function (item) { return !!(item[quality.id] || item.hls); });
         });
 
         if (!qualities.length) {
@@ -363,14 +451,14 @@
 
         function start(quality) {
             var queue = playlist.map(function (item, index) {
-                var url = item[quality.id] || availableQuality(item, quality.id);
+                var url = item[quality.id] || item.hls || availableQuality(item, quality.id);
                 if (!url) return null;
                 var number = episodeNumber(item, index);
                 return {
                     url: url,
-                    title: releaseTitle(detail) + ' — серия ' + number,
+                    title: (detail.title || releaseTitle(detail)) + ' — серия ' + number,
                     episode: number,
-                    season: 1,
+                    season: item.season || 1,
                     source: 'AniLibria'
                 };
             }).filter(Boolean);
@@ -413,7 +501,7 @@
 
     function openEpisodes(item) {
         notify('Загружаю сезоны и серии AniLibria…');
-        adapters.anilibria.resolve(item).then(function (detail) {
+        adapters[item.source || 'anilibria'].resolve(item).then(function (detail) {
             var episodes = episodeEntries(detail);
             if (!episodes.length) {
                 notify('API AniLibria не вернул серии для этого релиза. Попробуйте другой сезон/релиз.');
@@ -501,7 +589,7 @@
             return;
         }
         notify('Поиск в ' + source.name + ' по ' + queries.length + ' названиям…');
-        adapter.search(queries).then(function (results) {
+        adapter.search(queries, movie).then(function (results) {
             showResults(source, results, movie, queries[0]);
         }).catch(function (error) {
             notify(source.name + ': ' + error.message);

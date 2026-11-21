@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.4.0';
+    var VERSION = '0.5.0';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -170,24 +170,165 @@
         }
     }
 
-    function showResults(source, results) {
-        if (!root.Lampa || !root.Lampa.Select || typeof root.Lampa.Select.show !== 'function') {
-            notify('Найдено: ' + results.length + '. В этой версии Lampa нет Select API.');
-            return;
-        }
+    function showResults(source, results, movie, query) {
         if (!results.length) {
             notify(source.name + ': ничего не найдено');
             return;
         }
-        root.Lampa.Select.show({
-            title: source.name + ' — результаты',
-            items: results.map(function (item) {
-                return { title: item.title + (item.year ? ' (' + item.year + ')' : ''), item: item };
-            }),
-            onSelect: function (selected) {
-                var item = selected.item;
-                openEpisodes(item);
+        openResultsPage(source, results, movie, query);
+    }
+
+    function openResultsPage(source, results, movie, query) {
+        if (!root.Lampa || !root.Lampa.Component || !root.Lampa.Activity ||
+            !root.Lampa.Explorer || !root.Lampa.Scroll) {
+            root.Lampa.Select.show({
+                title: source.name + ' — результаты',
+                items: results.map(function (item) {
+                    return { title: item.title, item: item };
+                }),
+                onSelect: function (selected) { openEpisodes(selected.item); }
+            });
+            return;
+        }
+
+        var pageId = 'lampa_cinema_results';
+        function page(object) {
+            var activity = this;
+            var files = new root.Lampa.Explorer(object);
+            var scroll = new root.Lampa.Scroll({ mask: true, over: true });
+            var destroyed = false;
+            var last = null;
+
+            function headButton(title, action) {
+                var el = root.jQuery('<div class="selector filter__item"><span></span></div>');
+                el.find('span').text(title);
+                el.on('hover:enter click', action);
+                return el;
             }
+
+            function renderHead() {
+                var head = root.jQuery('<div class="online_mod__head"></div>');
+                head.append(headButton('Балансер: ' + source.name, chooseSource));
+                head.append(headButton('Уточнить поиск: ' + query, refineSearch));
+                files.appendHead(head);
+            }
+
+            function chooseSource() {
+                root.Lampa.Select.show({
+                    title: 'Выбор балансера',
+                    items: SOURCES.map(function (item) {
+                        return {
+                            title: item.name + (item.id === source.id ? ' ✓' : '') +
+                                (item.status === 'planned' ? ' · в разработке' : ''),
+                            source: item
+                        };
+                    }),
+                    onSelect: function (selected) {
+                        if (selected.source.id === source.id) return;
+                        searchSource(selected.source, movie, query);
+                    }
+                });
+            }
+
+            function refineSearch() {
+                if (!root.Lampa.Input || typeof root.Lampa.Input.edit !== 'function') return;
+                root.Lampa.Input.edit({
+                    title: 'Уточнить поиск',
+                    value: query,
+                    free: true,
+                    nosave: true
+                }, function (value) {
+                    value = typeof value === 'string' ? value.trim() : '';
+                    if (value) searchSource(source, movie, value);
+                });
+            }
+
+            function showEpisodes(item) {
+                notify('Загружаю список серий…');
+                adapters.anilibria.resolve(item).then(function (detail) {
+                    if (destroyed) return;
+                    var episodes = episodeEntries(detail);
+                    if (!episodes.length) {
+                        notify('У этого релиза нет доступных серий');
+                        return;
+                    }
+                    root.Lampa.Select.show({
+                        title: releaseTitle(detail) + ' — серии',
+                        items: episodes.map(function (episode) {
+                            var number = episode.ordinal || episode.sort_order || '';
+                            return {
+                                title: 'Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
+                                episode: episode
+                            };
+                        }),
+                        onSelect: function (selected) {
+                            playEpisode(detail, selected.episode);
+                        }
+                    });
+                }).catch(function (error) {
+                    if (!destroyed) notify('Не удалось загрузить серии: ' + error.message);
+                });
+            }
+
+            this.create = function () {
+                activity.loader(false);
+                renderHead();
+                files.appendFiles(scroll.render());
+                results.forEach(function (item) {
+                    var year = item.year ? ' · ' + item.year : '';
+                    var row = root.jQuery(
+                        '<div class="torrent-item selector">' +
+                        '<div class="torrent-item__body">' +
+                        '<div class="torrent-item__title"></div>' +
+                        '<div class="torrent-item__details"></div>' +
+                        '</div></div>'
+                    );
+                    row.find('.torrent-item__title').text(item.title);
+                    row.find('.torrent-item__details').text(source.name + year);
+                    row.on('hover:enter click', function () {
+                        showEpisodes(item);
+                    });
+                    scroll.append(row);
+                });
+                this.start();
+                return this.render();
+            };
+
+            this.start = function () {
+                if (root.Lampa.Controller) {
+                    root.Lampa.Controller.add('content', {
+                        toggle: function () {
+                            root.Lampa.Controller.collectionSet(scroll.render(), files.render());
+                            root.Lampa.Controller.collectionFocus(last || false, scroll.render());
+                        },
+                        up: function () { root.Lampa.Controller.toggle('head'); },
+                        down: function () { root.Lampa.Navigator.move('down'); },
+                        right: function () { root.Lampa.Navigator.move('right'); },
+                        left: function () { root.Lampa.Controller.toggle('menu'); },
+                        back: function () { root.Lampa.Activity.backward(); }
+                    });
+                    root.Lampa.Controller.toggle('content');
+                }
+            };
+
+            this.render = function () { return files.render(); };
+            this.pause = function () {};
+            this.stop = function () {};
+            this.destroy = function () {
+                destroyed = true;
+                if (scroll && scroll.destroy) scroll.destroy();
+                if (files && files.destroy) files.destroy();
+            };
+        }
+
+        root.Lampa.Component.add(pageId, page);
+        root.Lampa.Activity.push({
+            url: '',
+            title: source.name + ' — результаты',
+            component: pageId,
+            movie: movie,
+            search: query,
+            page: 1
         });
     }
 
@@ -292,7 +433,7 @@
         return values.slice(0, 6);
     }
 
-    function searchSource(source, movie) {
+    function searchSource(source, movie, customQuery) {
         var store = getStorage();
         var enabled = store && store.get(PREFIX + 'enabled_' + source.id) === true;
         if (!enabled) {
@@ -304,14 +445,14 @@
             notify(source.name + ': адаптер ещё не реализован');
             return;
         }
-        var queries = movieSearchQueries(movie);
+        var queries = customQuery ? [customQuery] : movieSearchQueries(movie);
         if (!queries.length) {
             notify('Не удалось определить название фильма');
             return;
         }
         notify('Поиск в ' + source.name + ' по ' + queries.length + ' названиям…');
         adapter.search(queries).then(function (results) {
-            showResults(source, results);
+            showResults(source, results, movie, queries[0]);
         }).catch(function (error) {
             notify(source.name + ': ' + error.message);
         });

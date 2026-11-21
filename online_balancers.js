@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.3.1';
+    var VERSION = '0.3.2';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -87,7 +87,12 @@
         if (!store || typeof store.get !== 'function' || typeof store.set !== 'function') return;
         SOURCES.forEach(function (source) {
             var key = PREFIX + 'enabled_' + source.id;
-            if (store.get(key) === undefined || store.get(key) === null) store.set(key, source.status === 'search-ready');
+            if (source.id === 'anilibria') {
+                // Включаем AniLibria принудительно для тестирования поиска и серий.
+                store.set(key, true);
+            } else if (store.get(key) === undefined || store.get(key) === null) {
+                store.set(key, false);
+            }
         });
     }
 

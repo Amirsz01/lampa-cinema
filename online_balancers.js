@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.5.0';
+    var VERSION = '0.5.1';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -259,7 +259,6 @@
             }
 
             this.create = function () {
-                activity.loader(false);
                 renderHead();
                 files.appendFiles(scroll.render());
                 results.forEach(function (item) {

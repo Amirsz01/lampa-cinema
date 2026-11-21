@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.7.2';
+    var VERSION = '0.7.3';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -461,31 +461,61 @@
     }
 
     function playEpisode(detail, episode, playlist) {
-        var qualities = [
+        var isCollaps = !!(episode && episode.hls && (episode.audio || episode.subtitles));
+        var qualities = isCollaps ? [
+            { id: 'hls', title: 'Авто (HLS)' }
+        ] : [
             { id: 'hls_1080', title: '1080p' },
             { id: 'hls_720', title: '720p' },
             { id: 'hls_480', title: '480p' }
         ].filter(function (quality) {
-            return playlist.some(function (item) { return !!(item[quality.id] || item.hls); });
+            return !!episode[quality.id] || playlist.some(function (item) { return !!item[quality.id]; });
         });
 
         if (!qualities.length) {
-            notify('Для выбранного сезона нет доступных HLS-потоков');
+            notify('Для выбранной серии нет доступных видеопотоков');
             return;
         }
 
-        function start(quality) {
+        function subtitleChoices(current) {
+            var tracks = Array.isArray(current.subtitles) ? current.subtitles : [];
+            return [{ title: 'Без субтитров', track: null }].concat(tracks.map(function (track, index) {
+                return {
+                    title: track.name || track.label || ('Субтитры ' + (index + 1)),
+                    track: track
+                };
+            }));
+        }
+
+        function start(quality, subtitle) {
             var queue = playlist.map(function (item, index) {
-                var url = item[quality.id] || item.hls || availableQuality(item, quality.id);
+                var url = item[quality.id] || (isCollaps ? item.hls : availableQuality(item, quality.id));
                 if (!url) return null;
                 var number = episodeNumber(item, index);
-                return {
+                var playerItem = {
                     url: url,
                     title: (detail.title || releaseTitle(detail)) + ' — серия ' + number,
                     episode: number,
                     season: item.season || 1,
-                    source: 'AniLibria'
+                    source: isCollaps ? 'Collaps' : 'AniLibria'
                 };
+                // Collaps отдаёт отдельный URL субтитров для каждой серии.
+                // Выбираем дорожку по названию, а не переносим временный URL другой серии.
+                if (subtitle) {
+                    var tracks = Array.isArray(item.subtitles) ? item.subtitles : [];
+                    var matched = tracks.filter(function (track) {
+                        return (track.name || track.label || '') === (subtitle.name || subtitle.label || '');
+                    })[0];
+                    if (!matched && item === episode) matched = subtitle;
+                    if (matched && matched.url) {
+                        playerItem.subtitles = [{
+                            url: matched.url,
+                            label: matched.name || matched.label || 'Субтитры',
+                            language: /^eng/i.test(matched.name || '') ? 'en' : 'ru'
+                        }];
+                    }
+                }
+                return playerItem;
             }).filter(Boolean);
 
             var currentIndex = queue.findIndex(function (item) {
@@ -501,8 +531,6 @@
                 return;
             }
 
-            // Штатный контракт Lampa: сначала запускаем выбранную серию,
-            // затем передаём полный упорядоченный плейлист для автоперехода.
             root.Lampa.Player.play(queue[currentIndex]);
             if (queue.length > 1 && typeof root.Lampa.Player.playlist === 'function') {
                 root.Lampa.Player.playlist(queue);
@@ -511,8 +539,21 @@
             }
         }
 
+        function chooseSubtitle(quality) {
+            var choices = subtitleChoices(episode);
+            if (!isCollaps || choices.length === 1) {
+                start(quality, null);
+                return;
+            }
+            root.Lampa.Select.show({
+                title: 'Субтитры — серия ' + episodeNumber(episode, playlist.indexOf(episode)),
+                items: choices,
+                onSelect: function (selected) { start(quality, selected.track); }
+            });
+        }
+
         if (qualities.length === 1) {
-            start(qualities[0]);
+            chooseSubtitle(qualities[0]);
             return;
         }
         root.Lampa.Select.show({
@@ -520,7 +561,7 @@
             items: qualities.map(function (quality) {
                 return { title: quality.title, quality: quality };
             }),
-            onSelect: function (selected) { start(selected.quality); }
+            onSelect: function (selected) { chooseSubtitle(selected.quality); }
         });
     }
 

@@ -239,7 +239,7 @@
         if (!store || typeof store.get !== 'function' || typeof store.set !== 'function') return;
         SOURCES.forEach(function (source) {
             var key = PREFIX + 'enabled_' + source.id;
-            if (source.id === 'anilibria' && (store.get(key) === undefined || store.get(key) === null)) {
+            if ((source.id === 'anilibria' || source.id === 'collaps') && (store.get(key) === undefined || store.get(key) === null)) {
                 store.set(key, true);
             } else if (store.get(key) === undefined || store.get(key) === null) {
                 store.set(key, false);

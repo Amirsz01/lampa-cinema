@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.3.0';
+    var VERSION = '0.3.1';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -238,19 +238,48 @@
 
     function registerLampa() {
         if (!root.Lampa || !root.Lampa.Manifest) return;
+
         root.Lampa.Manifest.plugins = {
             type: 'video',
             version: VERSION,
             name: 'Lampa Cinema',
-            description: 'Каталог онлайн-источников и поиск контента',
+            description: 'Поиск и просмотр серий AniLibria',
             component: 'lampa_cinema',
             onContextMenu: function () {
-                return { title: 'Lampa Cinema' };
+                return { name: 'Lampa Cinema', description: 'Поиск и просмотр серий' };
             },
             onContextLauch: function (card) {
                 openSourceMenu(card || {});
             }
         };
+
+        // Кнопка непосредственно на странице фильма/сериала.
+        if (root.Lampa.Listener && typeof root.Lampa.Listener.follow === 'function' && !root.lampaCinemaFullButtonBound) {
+            root.lampaCinemaFullButtonBound = true;
+            root.Lampa.Listener.follow('full', function (event) {
+                if (event.type !== 'complite' || !event.object || !event.object.activity) return;
+                var activity = event.object.activity;
+                if (!activity.render || typeof root.jQuery !== 'function') return;
+
+                var $root = root.jQuery(activity.render());
+                if (!$root.length || $root.find('.view--lampa-cinema').length) return;
+
+                var button = root.jQuery(
+                    '<div class="full-start__button selector view--lampa-cinema">' +
+                    '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">' +
+                    '<path fill="currentColor" d="M8 5v14l11-7z"/></svg>' +
+                    '<span>Lampa Cinema</span></div>'
+                );
+
+                button.on('hover:enter click', function () {
+                    openSourceMenu(event.data && event.data.movie ? event.data.movie : {});
+                });
+
+                var anchor = $root.find('.view--torrent').last();
+                if (anchor.length) anchor.after(button);
+                else $root.find('.full-start__buttons').append(button);
+            });
+        }
     }
 
     function boot() {

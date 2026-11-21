@@ -13,7 +13,7 @@
         ['anilibria', 'AniLibria'], ['anilibria_top', 'AniLibria.top'], ['animelib', 'AnimeLib'],
         ['kodik', 'Kodik'], ['alloha', 'Alloha'], ['kinopub', 'KinoPub']
     ].map(function (item) {
-        return { id: item[0], name: item[1], status: item[0] === 'anilibria' ? 'search-ready' : 'planned' };
+        return { id: item[0], name: item[1], status: (item[0] === 'anilibria' || item[0] === 'collaps') ? 'search-ready' : 'planned' };
     });
 
     var adapters = {};
@@ -656,10 +656,10 @@
             type: 'video',
             version: VERSION,
             name: 'Lampa Cinema',
-            description: 'Поиск и просмотр серий AniLibria',
+            description: 'Поиск и просмотр через AniLibria и Collaps',
             component: 'lampa_cinema',
             onContextMenu: function () {
-                return { name: 'Lampa Cinema', description: 'Поиск и просмотр серий' };
+                return { name: 'Lampa Cinema', description: 'Поиск и просмотр через балансеры' };
             },
             onContextLauch: function (card) {
                 openSourceMenu(card || {});
@@ -699,7 +699,7 @@
         initSettings();
         registerLampa();
         if (root.console && root.console.info) {
-            root.console.info('[Lampa Cinema] v' + VERSION + ' loaded; AniLibria search and HLS playback ready, other providers planned.');
+            root.console.info('[Lampa Cinema] v' + VERSION + ' loaded; AniLibria and Collaps adapters enabled; other providers planned.');
         }
     }
 

@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.5.1';
+    var VERSION = '0.6.0';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -252,7 +252,7 @@
                         notify('У этого релиза нет доступных серий');
                         return;
                     }
-                    openEpisodeListPage(detail, episodes);
+                    openEpisodesFromDetail(detail, episodes);
                 }).catch(function (error) {
                     if (!destroyed) notify('Не удалось загрузить серии: ' + error.message);
                 });
@@ -320,32 +320,82 @@
     }
 
     function episodeEntries(detail) {
-        return detail && Array.isArray(detail.episodes) ? detail.episodes : [];
+        var episodes = detail && Array.isArray(detail.episodes) ? detail.episodes : [];
+        // Некоторые ответы API оборачивают релиз в data/release.
+        if (!episodes.length && detail && detail.data) {
+            var nested = detail.data.release || detail.data;
+            if (nested && Array.isArray(nested.episodes)) episodes = nested.episodes;
+        }
+        return episodes.slice().sort(function (a, b) {
+            var left = Number(a.sort_order !== undefined ? a.sort_order : a.ordinal) || 0;
+            var right = Number(b.sort_order !== undefined ? b.sort_order : b.ordinal) || 0;
+            return left - right;
+        });
     }
 
-    function playEpisode(detail, episode) {
+    function episodeNumber(episode, index) {
+        return episode.ordinal !== undefined && episode.ordinal !== null ? episode.ordinal :
+            (episode.sort_order !== undefined && episode.sort_order !== null ? episode.sort_order : index + 1);
+    }
+
+    function availableQuality(episode, preferred) {
+        var order = preferred || 'hls_720';
+        var ids = [order, 'hls_1080', 'hls_720', 'hls_480'];
+        for (var i = 0; i < ids.length; i++) {
+            if (episode && episode[ids[i]]) return episode[ids[i]];
+        }
+        return '';
+    }
+
+    function playEpisode(detail, episode, playlist) {
         var qualities = [
             { id: 'hls_1080', title: '1080p' },
             { id: 'hls_720', title: '720p' },
             { id: 'hls_480', title: '480p' }
-        ].filter(function (quality) { return !!episode[quality.id]; });
+        ].filter(function (quality) {
+            return playlist.some(function (item) { return !!item[quality.id]; });
+        });
 
         if (!qualities.length) {
-            notify('Для этой серии нет доступного HLS-потока');
+            notify('Для выбранного сезона нет доступных HLS-потоков');
             return;
         }
 
         function start(quality) {
-            var url = episode[quality.id];
+            var queue = playlist.map(function (item, index) {
+                var url = item[quality.id] || availableQuality(item, quality.id);
+                if (!url) return null;
+                var number = episodeNumber(item, index);
+                return {
+                    url: url,
+                    title: releaseTitle(detail) + ' — серия ' + number,
+                    episode: number,
+                    season: 1,
+                    source: 'AniLibria'
+                };
+            }).filter(Boolean);
+
+            var currentIndex = queue.findIndex(function (item) {
+                return String(item.episode) === String(episodeNumber(episode, playlist.indexOf(episode)));
+            });
+            if (currentIndex < 0) currentIndex = 0;
+            if (!queue.length) {
+                notify('Не удалось сформировать список воспроизведения');
+                return;
+            }
             if (!root.Lampa || !root.Lampa.Player || typeof root.Lampa.Player.play !== 'function') {
                 notify('В этой версии Lampa не найден Lampa.Player.play');
                 return;
             }
-            root.Lampa.Player.play({
-                url: url,
-                title: releaseTitle(detail) + ' — серия ' + (episode.ordinal || episode.sort_order || ''),
-                quality: 'auto'
-            });
+
+            // Штатный контракт Lampa: сначала запускаем выбранную серию,
+            // затем передаём полный упорядоченный плейлист для автоперехода.
+            root.Lampa.Player.play(queue[currentIndex]);
+            if (queue.length > 1 && typeof root.Lampa.Player.playlist === 'function') {
+                root.Lampa.Player.playlist(queue);
+            } else if (queue.length > 1) {
+                notify('Автопереход недоступен в этой версии Lampa');
+            }
         }
 
         if (qualities.length === 1) {
@@ -353,7 +403,7 @@
             return;
         }
         root.Lampa.Select.show({
-            title: 'Качество — серия ' + (episode.ordinal || episode.sort_order || ''),
+            title: 'Качество — серия ' + episodeNumber(episode, playlist.indexOf(episode)),
             items: qualities.map(function (quality) {
                 return { title: quality.title, quality: quality };
             }),
@@ -362,27 +412,40 @@
     }
 
     function openEpisodes(item) {
-        notify('Загружаю серии AniLibria…');
+        notify('Загружаю сезоны и серии AniLibria…');
         adapters.anilibria.resolve(item).then(function (detail) {
             var episodes = episodeEntries(detail);
             if (!episodes.length) {
-                notify('В онлайн-плеере AniLibria пока нет серий для этого релиза');
+                notify('API AniLibria не вернул серии для этого релиза. Попробуйте другой сезон/релиз.');
                 return;
             }
+            // В AniLibria отдельные сезоны часто представлены отдельными релизами.
+            // Внутри выбранного релиза серии идут по sort_order/ordinal.
             root.Lampa.Select.show({
-                title: releaseTitle(detail) + ' — серии',
-                items: episodes.map(function (episode) {
+                title: releaseTitle(detail) + ' — выбор серии',
+                items: episodes.map(function (episode, index) {
+                    var number = episodeNumber(episode, index);
                     return {
-                        title: 'Серия ' + (episode.ordinal || episode.sort_order || '') + (episode.name ? ' — ' + episode.name : ''),
+                        title: 'Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
                         episode: episode
                     };
                 }),
                 onSelect: function (selected) {
-                    playEpisode(detail, selected.episode);
+                    playEpisode(detail, selected.episode, episodes);
                 }
             });
         }).catch(function (error) {
-            notify('AniLibria: ' + error.message);
+            notify('Не удалось загрузить серии AniLibria: ' + error.message);
+        });
+    }
+
+    function showEpisodeMenu(detail, episodes) {
+        root.Lampa.Select.show({
+            title: releaseTitle(detail) + ' — серии',
+            items: episodes.map(function (episode, index) {
+                return { title: 'Серия ' + episodeNumber(episode, index) + (episode.name ? ' — ' + episode.name : ''), episode: episode };
+            }),
+            onSelect: function (selected) { playEpisode(detail, selected.episode, episodes); }
         });
     }
 
@@ -418,61 +481,6 @@
         }
 
         return values.slice(0, 6);
-    }
-
-    function openEpisodeListPage(detail, episodes) {
-        var pageId = 'lampa_cinema_episodes';
-        function page(object) {
-            var files = new root.Lampa.Explorer(object);
-            var scroll = new root.Lampa.Scroll({ mask: true, over: true });
-            this.create = function () {
-                var head = root.jQuery('<div class="online_mod__head"></div>');
-                var back = root.jQuery('<div class="selector filter__item"><span>← К результатам поиска</span></div>');
-                back.on('hover:enter click', function () { root.Lampa.Activity.backward(); });
-                head.append(back);
-                files.appendHead(head);
-                files.appendFiles(scroll.render());
-                episodes.forEach(function (episode) {
-                    var number = episode.ordinal || episode.sort_order || '';
-                    var label = 'Серия ' + number + (episode.name ? ' — ' + episode.name : '');
-                    var row = root.jQuery('<div class="torrent-item selector"><div class="torrent-item__body"><div class="torrent-item__title"></div><div class="torrent-item__details">AniLibria · HLS</div></div></div>');
-                    row.find('.torrent-item__title').text(label);
-                    row.on('hover:enter click', function () { playEpisode(detail, episode); });
-                    scroll.append(row);
-                });
-                this.start();
-                return this.render();
-            };
-            this.start = function () {
-                root.Lampa.Controller.add('content', {
-                    toggle: function () {
-                        root.Lampa.Controller.collectionSet(scroll.render(), files.render());
-                        root.Lampa.Controller.collectionFocus(false, scroll.render());
-                    },
-                    up: function () { root.Lampa.Controller.toggle('head'); },
-                    down: function () { root.Lampa.Navigator.move('down'); },
-                    right: function () { root.Lampa.Navigator.move('right'); },
-                    left: function () { root.Lampa.Controller.toggle('menu'); },
-                    back: function () { root.Lampa.Activity.backward(); }
-                });
-                root.Lampa.Controller.toggle('content');
-            };
-            this.render = function () { return files.render(); };
-            this.pause = function () {};
-            this.stop = function () {};
-            this.destroy = function () {
-                if (scroll && scroll.destroy) scroll.destroy();
-                if (files && files.destroy) files.destroy();
-            };
-        }
-        root.Lampa.Component.add(pageId, page);
-        root.Lampa.Activity.push({
-            url: '',
-            title: releaseTitle(detail) + ' — серии',
-            component: pageId,
-            movie: detail,
-            page: 1
-        });
     }
 
     function searchSource(source, movie, customQuery) {

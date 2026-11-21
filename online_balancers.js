@@ -32,7 +32,7 @@
         if (typeof value !== 'string') return '';
         value = value.trim();
         if (!value) return '';
-        return value.replace(/\\/+$/, '') + '/';
+        return value.replace(/\/+$/, '') + '/';
     }
 
     function requestJSON(url) {
@@ -332,11 +332,11 @@
             placeholder: 'https://your-worker.example/'
         }, function (value) {
             value = typeof value === 'string' ? value.trim() : '';
-            if (value && !/^https?:\\/\\//i.test(value)) {
+            if (value && !/^https?:\/\//i.test(value)) {
                 notify('Адрес прокси должен начинаться с http:// или https://');
                 return;
             }
-            store.set(PREFIX + 'proxy_url', value.replace(/\\/+$/, ''));
+            store.set(PREFIX + 'proxy_url', value.replace(/\/+$/, ''));
             notify(value ? 'Прокси сохранён' : 'Прокси отключён. Запросы будут идти напрямую');
         });
     }

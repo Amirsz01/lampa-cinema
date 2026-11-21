@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.2.1';
+    var VERSION = '0.3.0';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -58,7 +58,7 @@
     adapters.anilibria = {
         id: 'anilibria',
         name: 'AniLibria',
-        capabilities: ['search'],
+        capabilities: ['search', 'episodes', 'hls'],
         search: function (query) {
             var url = 'https://api.anilibria.tv/v3/title/search?search=' +
                 encodeURIComponent(query) +
@@ -68,8 +68,13 @@
                 return list.map(normalizeAniLibria);
             });
         },
-        resolve: function () {
-            return Promise.reject(new Error('Получение прямого потока для AniLibria ещё не реализовано'));
+        resolve: function (item) {
+            if (!item || !item.id) return Promise.reject(new Error('Не указан ID релиза AniLibria'));
+            return requestJSON('https://api.anilibria.tv/v3/title?id=' + encodeURIComponent(item.id))
+                .then(function (data) {
+                    if (!data || !data.player || !data.player.list) throw new Error('У релиза нет списка серий в онлайн-плеере');
+                    return data;
+                });
         }
     };
 
@@ -110,8 +115,82 @@
             }),
             onSelect: function (selected) {
                 var item = selected.item;
-                notify(item.title + ': поиск работает, получение видеопотока пока не подключено.');
+                openEpisodes(item);
             }
+        });
+    }
+
+    function episodeEntries(detail) {
+        var list = detail && detail.player && detail.player.list;
+        if (!list) return [];
+        if (Array.isArray(list)) return list;
+        return Object.keys(list).map(function (key) { return list[key]; });
+    }
+
+    function playEpisode(detail, episode) {
+        var player = detail.player || {};
+        var host = player.host || 'cache.libria.fun';
+        var hls = episode.hls || {};
+        var qualities = [
+            { id: 'fhd', title: '1080p' },
+            { id: 'hd', title: '720p' },
+            { id: 'sd', title: '480p' }
+        ].filter(function (quality) { return !!hls[quality.id]; });
+
+        if (!qualities.length) {
+            notify('Для этой серии нет доступного HLS-потока');
+            return;
+        }
+
+        function start(quality) {
+            var path = hls[quality.id];
+            var url = /^https?:\\/\\//i.test(path) ? path : 'https://' + host + (path.charAt(0) === '/' ? '' : '/') + path;
+            if (!root.Lampa || !root.Lampa.Player || typeof root.Lampa.Player.play !== 'function') {
+                notify('В этой версии Lampa не найден Lampa.Player.play');
+                return;
+            }
+            root.Lampa.Player.play({
+                url: url,
+                title: (detail.names && (detail.names.ru || detail.names.en) || 'AniLibria') + ' — серия ' + episode.episode,
+                quality: 'auto'
+            });
+        }
+
+        if (qualities.length === 1) {
+            start(qualities[0]);
+            return;
+        }
+        root.Lampa.Select.show({
+            title: 'Качество — серия ' + episode.episode,
+            items: qualities.map(function (quality) {
+                return { title: quality.title, quality: quality };
+            }),
+            onSelect: function (selected) { start(selected.quality); }
+        });
+    }
+
+    function openEpisodes(item) {
+        notify('Загружаю серии AniLibria…');
+        adapters.anilibria.resolve(item).then(function (detail) {
+            var episodes = episodeEntries(detail);
+            if (!episodes.length) {
+                notify('В онлайн-плеере AniLibria пока нет серий для этого релиза');
+                return;
+            }
+            root.Lampa.Select.show({
+                title: (detail.names && (detail.names.ru || detail.names.en) || item.title) + ' — серии',
+                items: episodes.map(function (episode) {
+                    return {
+                        title: 'Серия ' + episode.episode + (episode.name ? ' — ' + episode.name : ''),
+                        episode: episode
+                    };
+                }),
+                onSelect: function (selected) {
+                    playEpisode(detail, selected.episode);
+                }
+            });
+        }).catch(function (error) {
+            notify('AniLibria: ' + error.message);
         });
     }
 
@@ -166,7 +245,7 @@
             description: 'Каталог онлайн-источников и поиск контента',
             component: 'lampa_cinema',
             onContextMenu: function () {
-                return { name: 'Lampa Cinema', description: 'Поиск по подключённым онлайн-источникам' };
+                return { title: 'Lampa Cinema' };
             },
             onContextLauch: function (card) {
                 openSourceMenu(card || {});
@@ -178,7 +257,7 @@
         initSettings();
         registerLampa();
         if (root.console && root.console.info) {
-            root.console.info('[Lampa Cinema] v' + VERSION + ' loaded; AniLibria search adapter ready, other providers planned.');
+            root.console.info('[Lampa Cinema] v' + VERSION + ' loaded; AniLibria search and HLS playback ready, other providers planned.');
         }
     }
 

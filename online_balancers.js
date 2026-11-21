@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.7.0';
+    var VERSION = '0.7.1';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -573,7 +573,10 @@
 
     function searchSource(source, movie, customQuery) {
         var store = getStorage();
-        var enabled = store && store.get(PREFIX + 'enabled_' + source.id) === true;
+        var enabledValue = store && store.get(PREFIX + 'enabled_' + source.id);
+        // Lampa Storage в разных сборках может возвращать boolean, число или строку.
+        // Выключенным считаем только явные false/0; строка 'true' не должна блокировать источник.
+        var enabled = enabledValue !== false && enabledValue !== 0 && enabledValue !== 'false' && enabledValue !== '0';
         if (!enabled) {
             notify(source.name + ' выключен в настройках Lampa Cinema');
             return;

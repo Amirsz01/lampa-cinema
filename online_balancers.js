@@ -252,19 +252,7 @@
                         notify('У этого релиза нет доступных серий');
                         return;
                     }
-                    root.Lampa.Select.show({
-                        title: releaseTitle(detail) + ' — серии',
-                        items: episodes.map(function (episode) {
-                            var number = episode.ordinal || episode.sort_order || '';
-                            return {
-                                title: 'Серия ' + number + (episode.name ? ' — ' + episode.name : ''),
-                                episode: episode
-                            };
-                        }),
-                        onSelect: function (selected) {
-                            playEpisode(detail, selected.episode);
-                        }
-                    });
+                    openEpisodeListPage(detail, episodes);
                 }).catch(function (error) {
                     if (!destroyed) notify('Не удалось загрузить серии: ' + error.message);
                 });
@@ -431,6 +419,61 @@
         }
 
         return values.slice(0, 6);
+    }
+
+    function openEpisodeListPage(detail, episodes) {
+        var pageId = 'lampa_cinema_episodes';
+        function page(object) {
+            var files = new root.Lampa.Explorer(object);
+            var scroll = new root.Lampa.Scroll({ mask: true, over: true });
+            this.create = function () {
+                var head = root.jQuery('<div class="online_mod__head"></div>');
+                var back = root.jQuery('<div class="selector filter__item"><span>← К результатам поиска</span></div>');
+                back.on('hover:enter click', function () { root.Lampa.Activity.backward(); });
+                head.append(back);
+                files.appendHead(head);
+                files.appendFiles(scroll.render());
+                episodes.forEach(function (episode) {
+                    var number = episode.ordinal || episode.sort_order || '';
+                    var label = 'Серия ' + number + (episode.name ? ' — ' + episode.name : '');
+                    var row = root.jQuery('<div class="torrent-item selector"><div class="torrent-item__body"><div class="torrent-item__title"></div><div class="torrent-item__details">AniLibria · HLS</div></div></div>');
+                    row.find('.torrent-item__title').text(label);
+                    row.on('hover:enter click', function () { playEpisode(detail, episode); });
+                    scroll.append(row);
+                });
+                this.start();
+                return this.render();
+            };
+            this.start = function () {
+                root.Lampa.Controller.add('content', {
+                    toggle: function () {
+                        root.Lampa.Controller.collectionSet(scroll.render(), files.render());
+                        root.Lampa.Controller.collectionFocus(false, scroll.render());
+                    },
+                    up: function () { root.Lampa.Controller.toggle('head'); },
+                    down: function () { root.Lampa.Navigator.move('down'); },
+                    right: function () { root.Lampa.Navigator.move('right'); },
+                    left: function () { root.Lampa.Controller.toggle('menu'); },
+                    back: function () { root.Lampa.Activity.backward(); }
+                });
+                root.Lampa.Controller.toggle('content');
+            };
+            this.render = function () { return files.render(); };
+            this.pause = function () {};
+            this.stop = function () {};
+            this.destroy = function () {
+                if (scroll && scroll.destroy) scroll.destroy();
+                if (files && files.destroy) files.destroy();
+            };
+        }
+        root.Lampa.Component.add(pageId, page);
+        root.Lampa.Activity.push({
+            url: '',
+            title: releaseTitle(detail) + ' — серии',
+            component: pageId,
+            movie: detail,
+            page: 1
+        });
     }
 
     function searchSource(source, movie, customQuery) {

@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.7.1';
+    var VERSION = '0.7.2';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -163,7 +163,7 @@
 
     function parseCollapsPlayer(text) {
         var source = String(text || '').replace(/\\n/g, '');
-        var marker = source.search(/makePlayer\s*\(/);
+        var marker = source.search(/\bmakePlayer\s*\(\s*\{/);
         if (marker < 0) throw new Error('Collaps не вернул конфигурацию плеера');
         var start = source.indexOf('{', marker);
         if (start < 0) throw new Error('В ответе Collaps отсутствует конфигурация');

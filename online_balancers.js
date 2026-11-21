@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.3.4';
+    var VERSION = '0.3.5';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -87,12 +87,37 @@
         name: 'AniLibria',
         capabilities: ['search', 'episodes', 'hls'],
         search: function (query) {
-            var url = 'https://api.anilibria.tv/v3/title/search?search=' +
-                encodeURIComponent(query) +
-                '&filter=id,names,posters,year,description&limit=15';
-            return requestJSON(url).then(function (data) {
-                var list = Array.isArray(data) ? data : (data.list || []);
-                return list.map(normalizeAniLibria);
+            var queries = Array.isArray(query) ? query : [query];
+            queries = queries.filter(function (value, index) {
+                return typeof value === 'string' && value.trim() &&
+                    queries.indexOf(value) === index;
+            }).map(function (value) { return value.trim(); }).slice(0, 6);
+
+            if (!queries.length) return Promise.resolve([]);
+
+            return Promise.all(queries.map(function (value) {
+                var url = 'https://api.anilibria.tv/v3/title/search?search=' +
+                    encodeURIComponent(value) +
+                    '&filter=id,names,posters,year,description&limit=15';
+                return requestJSON(url).then(function (data) {
+                    var list = Array.isArray(data) ? data : (data.list || []);
+                    return list.map(normalizeAniLibria);
+                }).catch(function () {
+                    // Ошибка одного варианта названия не должна отменять остальные запросы.
+                    return [];
+                });
+            })).then(function (groups) {
+                var result = [];
+                var seen = {};
+                groups.forEach(function (list) {
+                    list.forEach(function (item) {
+                        var key = String(item.id || item.title);
+                        if (seen[key]) return;
+                        seen[key] = true;
+                        result.push(item);
+                    });
+                });
+                return result;
             });
         },
         resolve: function (item) {
@@ -226,6 +251,40 @@
         });
     }
 
+    function movieSearchQueries(movie) {
+        movie = movie || {};
+        var values = [];
+
+        function add(value) {
+            if (typeof value === 'string') {
+                value = value.trim();
+                if (value && values.indexOf(value) === -1) values.push(value);
+            }
+        }
+
+        // Lampa/TMDB может передать японское original_title, поэтому ищем
+        // также по локализованному названию и доступным альтернативным полям.
+        [
+            movie.title, movie.name,
+            movie.original_title, movie.original_name,
+            movie.ru_title, movie.en_title,
+            movie.alternative_title, movie.alt_title
+        ].forEach(add);
+
+        var alternatives = movie.alternative_titles || movie.alternative_names;
+        if (Array.isArray(alternatives)) {
+            alternatives.forEach(function (item) {
+                add(typeof item === 'string' ? item : (item && (item.title || item.name)));
+            });
+        } else if (alternatives && typeof alternatives === 'object') {
+            Object.keys(alternatives).forEach(function (key) {
+                add(alternatives[key]);
+            });
+        }
+
+        return values.slice(0, 6);
+    }
+
     function searchSource(source, movie) {
         var store = getStorage();
         var enabled = store && store.get(PREFIX + 'enabled_' + source.id) === true;
@@ -238,13 +297,13 @@
             notify(source.name + ': адаптер ещё не реализован');
             return;
         }
-        var query = movie.original_title || movie.original_name || movie.title || movie.name || '';
-        if (!query) {
+        var queries = movieSearchQueries(movie);
+        if (!queries.length) {
             notify('Не удалось определить название фильма');
             return;
         }
-        notify('Поиск в ' + source.name + '…');
-        adapter.search(query).then(function (results) {
+        notify('Поиск в ' + source.name + ' по ' + queries.length + ' названиям…');
+        adapter.search(queries).then(function (results) {
             showResults(source, results);
         }).catch(function (error) {
             notify(source.name + ': ' + error.message);

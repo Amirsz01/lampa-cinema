@@ -162,12 +162,32 @@
     }
 
     function parseCollapsPlayer(text) {
-        var match = String(text || '').replace(/\\n/g, '').match(/makePlayer\\(({.*?})\\);/);
-        if (!match) throw new Error('Collaps не вернул конфигурацию плеера');
-        try {
-            return JSON.parse(match[1]);
-        } catch (e) {
-            try { return (new Function('return (' + match[1] + ')'))(); }
+        var source = String(text || '').replace(/\\\\n/g, '');
+        var marker = source.search(/makePlayer\\s*\\(/);
+        if (marker < 0) throw new Error('Collaps не вернул конфигурацию плеера');
+        var start = source.indexOf('{', marker);
+        if (start < 0) throw new Error('В ответе Collaps отсутствует конфигурация');
+        var depth = 0;
+        var quote = '';
+        var escaped = false;
+        var end = -1;
+        for (var i = start; i < source.length; i++) {
+            var ch = source.charAt(i);
+            if (quote) {
+                if (escaped) escaped = false;
+                else if (ch === '\\\\') escaped = true;
+                else if (ch === quote) quote = '';
+                continue;
+            }
+            if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+            if (ch === '{') depth++;
+            else if (ch === '}' && --depth === 0) { end = i + 1; break; }
+        }
+        if (end < 0) throw new Error('Конфигурация Collaps обрезана');
+        var configText = source.slice(start, end);
+        try { return JSON.parse(configText); }
+        catch (e) {
+            try { return (new Function('return (' + configText + ')'))(); }
             catch (error) { throw new Error('Не удалось разобрать ответ Collaps'); }
         }
     }
@@ -177,11 +197,16 @@
         name: 'Collaps',
         capabilities: ['search', 'seasons', 'episodes', 'hls'],
         search: function (queries, movie) {
-            var kp = movie && (movie.kinopoisk_id || movie.id);
-            var imdb = movie && movie.imdb_id;
+            // movie.id в Lampa обычно является TMDB/internal ID, а не ID Кинопоиска.
+            // Передаём его в /kp/ только если источник карточки явно Kinopoisk.
+            var kp = movie && (movie.kinopoisk_id || movie.kp_id || movie.kinopoisk);
+            var imdb = movie && (movie.imdb_id || movie.imdb);
             var ids = [];
             if (kp) ids.push('kp/' + encodeURIComponent(kp));
             if (imdb) ids.push('imdb/' + encodeURIComponent(imdb));
+            if (!ids.length && movie && movie.id && /^(kp|kinopoisk)$/i.test(String(movie.source || ''))) {
+                ids.push('kp/' + encodeURIComponent(movie.id));
+            }
             if (!ids.length) return Promise.reject(new Error('Для Collaps нужен ID Кинопоиска или IMDb'));
             var hosts = ['https://api.nextembed.ws/embed/', 'https://api.kinogram.best/embed/'];
             function attempt(index, hostIndex) {

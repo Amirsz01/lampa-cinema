@@ -82,7 +82,7 @@
         if (!store || typeof store.get !== 'function' || typeof store.set !== 'function') return;
         SOURCES.forEach(function (source) {
             var key = PREFIX + 'enabled_' + source.id;
-            if (store.get(key) === undefined || store.get(key) === null) store.set(key, false);
+            if (store.get(key) === undefined || store.get(key) === null) store.set(key, source.status === 'search-ready');
         });
     }
 

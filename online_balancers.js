@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.2.0';
+    var VERSION = '0.2.1';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -161,8 +161,12 @@
         if (!root.Lampa || !root.Lampa.Manifest) return;
         root.Lampa.Manifest.plugins = {
             type: 'video',
+            version: VERSION,
+            name: 'Lampa Cinema',
+            description: 'Каталог онлайн-источников и поиск контента',
+            component: 'lampa_cinema',
             onContextMenu: function () {
-                return { title: 'Lampa Cinema' };
+                return { name: 'Lampa Cinema', description: 'Поиск по подключённым онлайн-источникам' };
             },
             onContextLauch: function (card) {
                 openSourceMenu(card || {});

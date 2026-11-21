@@ -162,8 +162,8 @@
     }
 
     function parseCollapsPlayer(text) {
-        var source = String(text || '').replace(/\\\\n/g, '');
-        var marker = source.search(/makePlayer\\s*\\(/);
+        var source = String(text || '').replace(/\\n/g, '');
+        var marker = source.search(/makePlayer\s*\()/;
         if (marker < 0) throw new Error('Collaps не вернул конфигурацию плеера');
         var start = source.indexOf('{', marker);
         if (start < 0) throw new Error('В ответе Collaps отсутствует конфигурация');

@@ -252,7 +252,7 @@
                         notify('У этого релиза нет доступных серий');
                         return;
                     }
-                    openEpisodesFromDetail(detail, episodes);
+                    showEpisodeMenu(detail, episodes);
                 }).catch(function (error) {
                     if (!destroyed) notify('Не удалось загрузить серии: ' + error.message);
                 });

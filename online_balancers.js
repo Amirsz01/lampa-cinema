@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.3.2';
+    var VERSION = '0.3.3';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -18,11 +18,38 @@
 
     var adapters = {};
 
+    function proxyLink(url, proxyBase) {
+        var pos = url.indexOf('/');
+        if (pos !== -1 && url.charAt(pos + 1) === '/') pos++;
+        var prefix = pos !== -1 ? url.substring(0, pos + 1) : '';
+        var rest = pos !== -1 ? url.substring(pos + 1) : url;
+        return proxyBase + 'enc/' + encodeURIComponent(root.btoa(prefix)) + '/' + rest;
+    }
+
     function requestJSON(url) {
         return new Promise(function (resolve, reject) {
+            if (root.Lampa && typeof root.Lampa.Reguest === 'function') {
+                var network = new root.Lampa.Reguest();
+                var proxyBase = new Date().getHours() % 2
+                    ? 'https://cors.nb557.workers.dev/'
+                    : 'https://cors.fx666.workers.dev/';
+                network.timeout(30000);
+                network.silent(proxyLink(url, proxyBase), function (json) {
+                    if (typeof json === 'string') {
+                        try { json = JSON.parse(json); }
+                        catch (error) { reject(new Error('AniLibria вернула некорректный JSON')); return; }
+                    }
+                    resolve(json);
+                }, function (a, c) {
+                    reject(new Error(network.errorDecode ? network.errorDecode(a, c) : 'Ошибка запроса через прокси'));
+                });
+                return;
+            }
+
+            // Fallback for environments without Lampa.Reguest.
             var xhr = new XMLHttpRequest();
-            xhr.open('GET', url, true);
-            xhr.timeout = 15000;
+            xhr.open('GET', proxyLink(url, 'https://cors.nb557.workers.dev/'), true);
+            xhr.timeout = 30000;
             xhr.setRequestHeader('Accept', 'application/json');
             xhr.onreadystatechange = function () {
                 if (xhr.readyState !== 4) return;
@@ -31,10 +58,10 @@
                     return;
                 }
                 try { resolve(JSON.parse(xhr.responseText)); }
-                catch (error) { reject(new Error('Invalid JSON response')); }
+                catch (error) { reject(new Error('AniLibria вернула некорректный JSON')); }
             };
-            xhr.onerror = function () { reject(new Error('Network or CORS error')); };
-            xhr.ontimeout = function () { reject(new Error('Request timeout')); };
+            xhr.onerror = function () { reject(new Error('Ошибка сети или CORS на прокси')); };
+            xhr.ontimeout = function () { reject(new Error('Тайм-аут запроса')); };
             xhr.send();
         });
     }

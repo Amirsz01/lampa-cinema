@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.3.3';
+    var VERSION = '0.3.4';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -256,10 +256,18 @@
             notify('Lampa Cinema загружен, но Select API недоступен');
             return;
         }
+        // Сначала показываем источники с реализованным поиском/воспроизведением.
+        // Порядок внутри каждой группы сохраняется.
+        var orderedSources = SOURCES.slice().sort(function (a, b) {
+            var aReady = a.status !== 'planned' ? 1 : 0;
+            var bReady = b.status !== 'planned' ? 1 : 0;
+            return bReady - aReady;
+        });
+
         root.Lampa.Select.show({
             title: 'Lampa Cinema — источники',
-            items: SOURCES.map(function (source) {
-                var status = source.status === 'search-ready' ? 'поиск доступен' : 'в разработке';
+            items: orderedSources.map(function (source) {
+                var status = source.status === 'search-ready' ? 'доступен' : 'в разработке';
                 return { title: source.name + ' · ' + status, source: source };
             }),
             onSelect: function (selected) {

@@ -144,7 +144,7 @@
 
         function start(quality) {
             var path = hls[quality.id];
-            var url = /^https?:\\/\\//i.test(path) ? path : 'https://' + host + (path.charAt(0) === '/' ? '' : '/') + path;
+            var url = (path.indexOf('http://') === 0 || path.indexOf('https://') === 0) ? path : 'https://' + host + (path.charAt(0) === '/' ? '' : '/') + path;
             if (!root.Lampa || !root.Lampa.Player || typeof root.Lampa.Player.play !== 'function') {
                 notify('В этой версии Lampa не найден Lampa.Player.play');
                 return;

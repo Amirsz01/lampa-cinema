@@ -1,7 +1,7 @@
 (function (root) {
     'use strict';
 
-    var VERSION = '0.3.5';
+    var VERSION = '0.4.0';
     var PREFIX = 'lob_';
     var SOURCES = [
         ['lumex', 'Lumex'], ['lumex_ads', 'Lumex (Ads)'], ['hdrezka', 'HDrezka'],
@@ -26,29 +26,37 @@
         return proxyBase + 'enc/' + encodeURIComponent(root.btoa(prefix)) + '/' + rest;
     }
 
+    function getProxyBase() {
+        var store = getStorage();
+        var value = store && typeof store.get === 'function' ? store.get(PREFIX + 'proxy_url') : '';
+        if (typeof value !== 'string') return '';
+        value = value.trim();
+        if (!value) return '';
+        return value.replace(/\\/+$/, '') + '/';
+    }
+
     function requestJSON(url) {
         return new Promise(function (resolve, reject) {
+            var proxyBase = getProxyBase();
+            var requestUrl = proxyBase ? proxyLink(url, proxyBase) : url;
+
             if (root.Lampa && typeof root.Lampa.Reguest === 'function') {
                 var network = new root.Lampa.Reguest();
-                var proxyBase = new Date().getHours() % 2
-                    ? 'https://cors.nb557.workers.dev/'
-                    : 'https://cors.fx666.workers.dev/';
                 network.timeout(30000);
-                network.silent(proxyLink(url, proxyBase), function (json) {
+                network.silent(requestUrl, function (json) {
                     if (typeof json === 'string') {
                         try { json = JSON.parse(json); }
                         catch (error) { reject(new Error('AniLibria вернула некорректный JSON')); return; }
                     }
                     resolve(json);
                 }, function (a, c) {
-                    reject(new Error(network.errorDecode ? network.errorDecode(a, c) : 'Ошибка запроса через прокси'));
+                    reject(new Error(network.errorDecode ? network.errorDecode(a, c) : 'Ошибка запроса. Проверьте API и адрес прокси.'));
                 });
                 return;
             }
 
-            // Fallback for environments without Lampa.Reguest.
             var xhr = new XMLHttpRequest();
-            xhr.open('GET', proxyLink(url, 'https://cors.nb557.workers.dev/'), true);
+            xhr.open('GET', requestUrl, true);
             xhr.timeout = 30000;
             xhr.setRequestHeader('Accept', 'application/json');
             xhr.onreadystatechange = function () {
@@ -60,23 +68,28 @@
                 try { resolve(JSON.parse(xhr.responseText)); }
                 catch (error) { reject(new Error('AniLibria вернула некорректный JSON')); }
             };
-            xhr.onerror = function () { reject(new Error('Ошибка сети или CORS на прокси')); };
+            xhr.onerror = function () { reject(new Error('Ошибка сети или CORS. Укажите CORS-прокси в настройках.')); };
             xhr.ontimeout = function () { reject(new Error('Тайм-аут запроса')); };
             xhr.send();
         });
     }
 
+    function releaseTitle(item) {
+        var name = item && item.name;
+        if (name && typeof name === 'object') return name.main || name.english || name.alternative || 'Без названия';
+        return typeof name === 'string' && name ? name : 'Без названия';
+    }
+
     function normalizeAniLibria(item) {
-        var names = item.names || {};
-        var posters = item.posters || {};
-        var poster = posters.original || posters.medium || posters.small || {};
+        var poster = item.poster || {};
+        var image = poster.optimized || poster;
         return {
             id: item.id,
             source: 'anilibria',
-            title: names.ru || names.alternative || names.en || 'Без названия',
-            originalTitle: names.en || '',
+            title: releaseTitle(item),
+            originalTitle: item.name_english || '',
             year: item.year || '',
-            poster: poster.url || poster.src || '',
+            poster: image.src || image.preview || poster.src || poster.preview || '',
             description: item.description || '',
             raw: item
         };
@@ -96,11 +109,10 @@
             if (!queries.length) return Promise.resolve([]);
 
             return Promise.all(queries.map(function (value) {
-                var url = 'https://api.anilibria.tv/v3/title/search?search=' +
-                    encodeURIComponent(value) +
-                    '&filter=id,names,posters,year,description&limit=15';
+                var url = 'https://anilibria.top/api/v1/app/search/releases?query=' +
+                    encodeURIComponent(value);
                 return requestJSON(url).then(function (data) {
-                    var list = Array.isArray(data) ? data : (data.list || []);
+                    var list = Array.isArray(data) ? data : (data.data || data.list || []);
                     return list.map(normalizeAniLibria);
                 }).catch(function () {
                     // Ошибка одного варианта названия не должна отменять остальные запросы.
@@ -122,9 +134,9 @@
         },
         resolve: function (item) {
             if (!item || !item.id) return Promise.reject(new Error('Не указан ID релиза AniLibria'));
-            return requestJSON('https://api.anilibria.tv/v3/title?id=' + encodeURIComponent(item.id))
+            return requestJSON('https://anilibria.top/api/v1/anime/releases/' + encodeURIComponent(item.id))
                 .then(function (data) {
-                    if (!data || !data.player || !data.player.list) throw new Error('У релиза нет списка серий в онлайн-плеере');
+                    if (!data || !Array.isArray(data.episodes)) throw new Error('У релиза нет списка серий');
                     return data;
                 });
         }
@@ -139,13 +151,15 @@
         if (!store || typeof store.get !== 'function' || typeof store.set !== 'function') return;
         SOURCES.forEach(function (source) {
             var key = PREFIX + 'enabled_' + source.id;
-            if (source.id === 'anilibria') {
-                // Включаем AniLibria принудительно для тестирования поиска и серий.
+            if (source.id === 'anilibria' && (store.get(key) === undefined || store.get(key) === null)) {
                 store.set(key, true);
             } else if (store.get(key) === undefined || store.get(key) === null) {
                 store.set(key, false);
             }
         });
+        if (store.get(PREFIX + 'proxy_url') === undefined || store.get(PREFIX + 'proxy_url') === null) {
+            store.set(PREFIX + 'proxy_url', '');
+        }
     }
 
     function notify(message) {
@@ -178,21 +192,15 @@
     }
 
     function episodeEntries(detail) {
-        var list = detail && detail.player && detail.player.list;
-        if (!list) return [];
-        if (Array.isArray(list)) return list;
-        return Object.keys(list).map(function (key) { return list[key]; });
+        return detail && Array.isArray(detail.episodes) ? detail.episodes : [];
     }
 
     function playEpisode(detail, episode) {
-        var player = detail.player || {};
-        var host = player.host || 'cache.libria.fun';
-        var hls = episode.hls || {};
         var qualities = [
-            { id: 'fhd', title: '1080p' },
-            { id: 'hd', title: '720p' },
-            { id: 'sd', title: '480p' }
-        ].filter(function (quality) { return !!hls[quality.id]; });
+            { id: 'hls_1080', title: '1080p' },
+            { id: 'hls_720', title: '720p' },
+            { id: 'hls_480', title: '480p' }
+        ].filter(function (quality) { return !!episode[quality.id]; });
 
         if (!qualities.length) {
             notify('Для этой серии нет доступного HLS-потока');
@@ -200,15 +208,14 @@
         }
 
         function start(quality) {
-            var path = hls[quality.id];
-            var url = (path.indexOf('http://') === 0 || path.indexOf('https://') === 0) ? path : 'https://' + host + (path.charAt(0) === '/' ? '' : '/') + path;
+            var url = episode[quality.id];
             if (!root.Lampa || !root.Lampa.Player || typeof root.Lampa.Player.play !== 'function') {
                 notify('В этой версии Lampa не найден Lampa.Player.play');
                 return;
             }
             root.Lampa.Player.play({
                 url: url,
-                title: (detail.names && (detail.names.ru || detail.names.en) || 'AniLibria') + ' — серия ' + episode.episode,
+                title: releaseTitle(detail) + ' — серия ' + (episode.ordinal || episode.sort_order || ''),
                 quality: 'auto'
             });
         }
@@ -218,7 +225,7 @@
             return;
         }
         root.Lampa.Select.show({
-            title: 'Качество — серия ' + episode.episode,
+            title: 'Качество — серия ' + (episode.ordinal || episode.sort_order || ''),
             items: qualities.map(function (quality) {
                 return { title: quality.title, quality: quality };
             }),
@@ -235,10 +242,10 @@
                 return;
             }
             root.Lampa.Select.show({
-                title: (detail.names && (detail.names.ru || detail.names.en) || item.title) + ' — серии',
+                title: releaseTitle(detail) + ' — серии',
                 items: episodes.map(function (episode) {
                     return {
-                        title: 'Серия ' + episode.episode + (episode.name ? ' — ' + episode.name : ''),
+                        title: 'Серия ' + (episode.ordinal || episode.sort_order || '') + (episode.name ? ' — ' + episode.name : ''),
                         episode: episode
                     };
                 }),
@@ -310,6 +317,30 @@
         });
     }
 
+    function editProxySetting() {
+        var store = getStorage();
+        if (!store || !root.Lampa || !root.Lampa.Input || typeof root.Lampa.Input.edit !== 'function') {
+            notify('Настройки ввода недоступны в этой версии Lampa');
+            return;
+        }
+        var current = store.get(PREFIX + 'proxy_url') || '';
+        root.Lampa.Input.edit({
+            title: 'Адрес CORS-прокси',
+            value: current,
+            free: true,
+            nosave: true,
+            placeholder: 'https://your-worker.example/'
+        }, function (value) {
+            value = typeof value === 'string' ? value.trim() : '';
+            if (value && !/^https?:\\/\\//i.test(value)) {
+                notify('Адрес прокси должен начинаться с http:// или https://');
+                return;
+            }
+            store.set(PREFIX + 'proxy_url', value.replace(/\\/+$/, ''));
+            notify(value ? 'Прокси сохранён' : 'Прокси отключён. Запросы будут идти напрямую');
+        });
+    }
+
     function openSourceMenu(movie) {
         if (!root.Lampa || !root.Lampa.Select || typeof root.Lampa.Select.show !== 'function') {
             notify('Lampa Cinema загружен, но Select API недоступен');
@@ -325,11 +356,15 @@
 
         root.Lampa.Select.show({
             title: 'Lampa Cinema — источники',
-            items: orderedSources.map(function (source) {
+            items: [{ title: '⚙ Настройки прокси', action: 'proxy_settings' }].concat(orderedSources.map(function (source) {
                 var status = source.status === 'search-ready' ? 'доступен' : 'в разработке';
                 return { title: source.name + ' · ' + status, source: source };
-            }),
+            })),
             onSelect: function (selected) {
+                if (selected.action === 'proxy_settings') {
+                    editProxySetting();
+                    return;
+                }
                 searchSource(selected.source, movie);
             }
         });
